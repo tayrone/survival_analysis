@@ -12,7 +12,7 @@ load("../rdatas/g3_survival.RData")
 interest_regs <- c("BHLHE41", "CAMTA1", "ZNF365", "KCNIP3", "RFX4", "SOX2", 
                     "NACC2", "ZNF385B", "NR1D1", "LHX4")
 
-#----
+#---- Gets required data for analysis ----
 
 enrich_scores <- tnsGet(rtns, "regulonActivity")
 
@@ -29,7 +29,7 @@ rownames(survival_data) <- str_remove(rownames(survival_data), ".CEL")
 rownames(status) <- str_remove(rownames(status), ".CEL")
 
 
-#----
+#---- Some data wrangling ----
 
 interest_status <- status %>% 
   select(interest_regs) %>% 
@@ -41,15 +41,7 @@ status_and_survival <- survival_data %>%
   inner_join(interest_status)
 
 
-#----
-
-complete_data %>% 
-  select(sample, time, event, SOX2) %>% 
-  mutate()
-
-
-
-#----
+#---- Generates the KM estimation and subsequent plots ----
 
 km <- with(status_and_survival, Surv(time, event))
 
