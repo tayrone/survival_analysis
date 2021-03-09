@@ -4,6 +4,7 @@ library(survival)
 library(ranger)
 library(ggfortify)
 library(gdata)
+library(survminer)
 
 theme_set(theme_light())
 
@@ -11,6 +12,7 @@ load("../rdatas/g3_survival.RData")
 
 interest_regs <- c("BHLHE41", "CAMTA1", "ZNF365", "KCNIP3", "RFX4", "SOX2", 
                     "NACC2", "ZNF385B", "NR1D1", "LHX4")
+
 
 #---- Gets required data for analysis ----
 
@@ -31,38 +33,70 @@ rownames(status) <- str_remove(rownames(status), ".CEL")
 
 #---- Some data wrangling ----
 
-interest_status <- status %>% 
-  select(interest_regs) %>% 
-  rownames_to_column(var = "sample")
+score_stats <- enrich_scores %>% 
+  select(all_of(interest_regs)) %>% 
+  summarise_all(list("mean"= mean, "median"= median, "iqr" = IQR))  %>% 
+  gather("method", "value") %>% 
+  separate(method, c("regulon", "method"), sep = "_") %>% 
+  spread(regulon, value)
+
+score_stats <- map(transpose(score_stats, .names = score_stats$method), 
+                   as.vector)
+
+enrich_scores %>% 
+  select(CAMTA1) %>% 
+  mutate(iqr_value = score_stats[["median"]][["CAMTA1"]],
+         status = case_when(CAMTA1 > iqr_value ~ 1,
+                            near(CAMTA1, iqr_value) ~ 0,
+                            CAMTA1 < iqr_value ~ -1))
+
+calculate_status <- function(regulon_scores, stat){
+  print(names(regulon_scores))
   
-status_and_survival <- survival_data %>% 
-  rownames_to_column(var = "sample") %>% 
-  select(sample, time, event) %>% 
-  inner_join(interest_status)
+}
+
+map(enrich_scores, calculate_status, stat = stats_median)
+
+
+
+# interest_status <- status %>% 
+#   select(all_of(interest_regs)) %>% 
+#   rownames_to_column(var = "sample")
+#   
+# status_and_survival <- survival_data %>% 
+#   rownames_to_column(var = "sample") %>% 
+#   select(sample, time, event) %>% 
+#   inner_join(interest_status)
 
 
 #---- Generates the KM estimation and subsequent plots ----
 
-km <- with(status_and_survival, Surv(time, event))
+for(regulon in interest_regs){
 
-km_fit <- survfit(Surv(time, event) ~ CAMTA1, data = status_and_survival)
-
-summary(km_fit, times = c(1,30,60,90*(1:10)))
-
-# km_fit$n.censor[km_fit$n.censor == 0] <- NA_integer_
-# 
-# ggplot(km_fit) +
-#   geom_step(aes(time, surv, color = strata)) +
-#   geom_point(aes(time*n.censor, surv*n.censor), size = 1, shape = 3, color = "black") +
-#   scale_y_continuous(limits = c(0, 1), labels = scales::percent)
+  km <- with(status_and_survival, Surv(time = time, event = event))
   
-plot <- 
-autoplot(km_fit, surv.linetype = "solid", conf.int = FALSE,
-         censor.size = 3, surv.size = 0.5,
-         main = "Kaplan Meier Estimate",
-         xlab = "Time (Years)",
-         ylab = "Survival Rate") 
+  km_fit <- survfit(Surv(time = time, event = event) ~ get(regulon), 
+                    data = status_and_survival)
+  
+  surv_pvalue(km_fit)$pval.txt
+  surv_median(km_fit)
+  print(km_fit)
+  
+  summary(km_fit, times = c(1,30,60,90*(1:10)))
+  
+    
+  plot <- autoplot(km_fit, surv.linetype = "solid", conf.int = FALSE,
+          censor.size = 3, surv.size = 0.5, main = "Kaplan Meier Estimate", 
+          xlab = "Time (Years)", ylab = "Survival Rate") 
+  
+  plot + labs(color = "Regulon Activity Status") +
+    scale_color_discrete(labels = c("Up", "Neutral", "Down")) +
+    labs(tag = paste0("Log-rank p-value: ", round(surv_pvalue(km_fit)$pval, 3))) +
+    theme(plot.tag = element_text(size = 10, face = "plain"), 
+          plot.tag.position = c(.803, .985))
+  
+  ggsave(paste0("./km_plots/", regulon, ".png"))
 
-plot + labs(color = "Title")
+}
 
-
+  
