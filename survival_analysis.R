@@ -18,7 +18,6 @@ interest_regs <- c("BHLHE41", "CAMTA1", "ZNF365", "KCNIP3", "RFX4", "SOX2",
 
 enrich_scores <- tnsGet(rtns, "regulonActivity")
 
-#status <- as.data.frame(enrich_scores$status)
 enrich_scores <- as.data.frame(enrich_scores$differential)
 
 survival_data <- tnsGet(rtns, "survivalData")
@@ -28,7 +27,6 @@ survival_data <- tnsGet(rtns, "survivalData")
 
 rownames(enrich_scores) <- str_remove(rownames(enrich_scores), ".CEL")
 rownames(survival_data) <- str_remove(rownames(survival_data), ".CEL")
-#rownames(status) <- str_remove(rownames(status), ".CEL")
 
 
 #---- Some data wrangling ----
@@ -46,11 +44,10 @@ score_stats <- map(transpose(score_stats, .names = score_stats$method),
 
 calculate_status <- function(regulon, stat){
   enrich_scores %>% 
-    select(regulon) %>% 
+    select(all_of(regulon)) %>% 
     rownames_to_column(var = "sample") %>% 
     mutate(stat_value = score_stats[[stat]][[regulon]],
            status = case_when(get(regulon) >= stat_value ~ 1,
-                              near(get(regulon), stat_value) ~ 0,
                               get(regulon) < stat_value ~ -1))
 }
 
@@ -63,7 +60,7 @@ mean_status <- map(interest_regs, calculate_status, stat = "mean")
 iqr_status <- map(interest_regs, calculate_status, stat = "iqr")
 
 
-#----
+#---- Calculate regulon status considering different statistical measures ----
 
 
 add_survival <- function(status){
@@ -81,65 +78,46 @@ median_status <- map(median_status, add_survival)
 mean_status <- map(mean_status, add_survival)
 iqr_status <- map(iqr_status, add_survival)
 
-# complete_data <- list("median" = median_status, "mean" = mean_status, 
-#                       "iqr" = iqr_status)
-
 
 #---- Generates the KM estimation and subsequent plots ----
 
+status <- list("mean" = mean_status, 
+               "median" = median_status, 
+               "iqr" = iqr_status)
 
+for(stat in names(status)){
 
-km <- with(iqr_status[["CAMTA1"]], Surv(time = time, event = event))
-
-km_fit <- survfit(Surv(time = time, event = event) ~ get("CAMTA1"), 
-                  data = iqr_status[["CAMTA1"]])
-
-surv_pvalue(km_fit)$pval.txt
-surv_median(km_fit)
-print(km_fit)
-
-summary(km_fit, times = c(1,30,60,90*(1:10)))
-
-
-plot <- autoplot(km_fit, surv.linetype = "solid", conf.int = FALSE,
-                 censor.size = 3, surv.size = 0.5, main = "Kaplan Meier Estimate", 
-                 xlab = "Time (Years)", ylab = "Survival Rate") 
-
-plot + labs(color = "Regulon Activity Status") +
-  scale_color_discrete(labels = c("Up", "Neutral", "Down")) +
-  labs(tag = paste0("Log-rank p-value: ", round(surv_pvalue(km_fit)$pval, 3))) +
-  theme(plot.tag = element_text(size = 10, face = "plain"), 
-        plot.tag.position = c(.803, .985))
-
-
-
-
-for(regulon in interest_regs){
-
-  km <- with(status_and_survival, Surv(time = time, event = event))
+  for(regulon in interest_regs){
   
-  km_fit <- survfit(Surv(time = time, event = event) ~ get(regulon), 
-                    data = status_and_survival)
-  
-  surv_pvalue(km_fit)$pval.txt
-  surv_median(km_fit)
-  print(km_fit)
-  
-  summary(km_fit, times = c(1,30,60,90*(1:10)))
-  
+    regulon_data <- status[[stat]][[regulon]]
     
-  plot <- autoplot(km_fit, surv.linetype = "solid", conf.int = FALSE,
-          censor.size = 3, surv.size = 0.5, main = "Kaplan Meier Estimate", 
-          xlab = "Time (Years)", ylab = "Survival Rate") 
+    
+    km <- with(regulon_data, Surv(time = time, event = event))
+    
+    km_fit <- survfit(Surv(time = time, event = event) ~ status, 
+                      data = regulon_data)
+    
+    surv_pvalue(km_fit)$pval.txt
+    surv_median(km_fit)
+    print(km_fit)
+    
+    summary(km_fit, times = c(1,30,60,90*(1:10)))
+    
+    
+    plot <- autoplot(km_fit, surv.linetype = "solid", conf.int = FALSE,
+                     censor.size = 3, surv.size = 0.5, main = "Kaplan Meier Estimate", 
+                     xlab = "Time (Years)", ylab = "Survival Rate") 
+    
+    plot + labs(color = "Regulon Activity Status") +
+      scale_color_discrete(labels = c("Up", "Down")) +
+      labs(tag = paste0("Log-rank p-value: ", round(surv_pvalue(km_fit)$pval, 3))) +
+      theme(plot.tag = element_text(size = 10, face = "plain"), 
+            plot.tag.position = c(.803, .985))
+    
+    
+    ggsave(paste0("./km_plots/", stat, "/", 
+                 regulon, ".png"))
   
-  plot + labs(color = "Regulon Activity Status") +
-    scale_color_discrete(labels = c("Up", "Neutral", "Down")) +
-    labs(tag = paste0("Log-rank p-value: ", round(surv_pvalue(km_fit)$pval, 3))) +
-    theme(plot.tag = element_text(size = 10, face = "plain"), 
-          plot.tag.position = c(.803, .985))
-  
-  ggsave(paste0("./km_plots/", regulon, ".png"))
+  }
 
 }
-
-  
